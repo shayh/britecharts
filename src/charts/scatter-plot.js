@@ -13,6 +13,7 @@ define(function(require) {
     const d3Shape = require('d3-shape');
     const d3Selection = require('d3-selection');
     const d3Voronoi = require('d3-voronoi');
+    const d3Zoom = require('d3-zoom');
 
     const colorHelper = require('./helpers/color');
     const {calcLinearRegression} = require('./helpers/number');
@@ -112,9 +113,11 @@ define(function(require) {
         xAxisFormatType = 'number',
         xAxisFormat = '',
         xScale,
+        xOriginalScale,
         yAxis,
         yAxisFormat = '',
         yScale,
+        yOriginalScale,
         areaScale,
         colorScale,
 
@@ -131,6 +134,7 @@ define(function(require) {
         trendLineDelay = 1500,
         trendLineDuration = 2000,
 
+        highlightPointData,
         highlightFilter,
         highlightFilterId,
         highlightStrokeWidth = 10,
@@ -208,6 +212,7 @@ define(function(require) {
                 initHighlightComponents();
                 drawDataPoints();
                 drawMaskingClip();
+                initZoom();
 
                 if (hasTrendline) {
                     drawTrendline(calcLinearRegression(dataPoints));
@@ -308,12 +313,12 @@ define(function(require) {
             const [maxX, maxY] = [d3Array.max(dataPoints, ({ x }) => x), d3Array.max(dataPoints, ({ y }) => y)];
             const yScaleBottomValue = Math.abs(minY) < 0 ? Math.abs(minY) : 0;
 
-            xScale = d3Scale.scaleLinear()
+            xOriginalScale = xScale = d3Scale.scaleLinear()
                 .domain([minX, maxX])
                 .rangeRound([0, chartWidth])
                 .nice();
 
-            yScale = d3Scale.scaleLinear()
+            yOriginalScale = yScale = d3Scale.scaleLinear()
                 .domain([yScaleBottomValue, maxY])
                 .rangeRound([chartHeight, 0])
                 .nice();
@@ -459,7 +464,54 @@ define(function(require) {
                 .attr('width', chartWidth)
                 .attr('height', chartHeight)
                 .attr('x', 0)
-                .attr('y', 0);
+                .attr('y', -1 * maxCircleArea);
+        }
+
+        /**
+         * Add Zoom control and event handling
+         * @return {void}
+         * @private
+         */
+        function initZoom() {
+            const zoom = d3Zoom.zoom()
+                .scaleExtent([.5, 20])  // This control how much you can unzoom (x0.5) and zoom (x20)
+                .extent([[0, 0], [width, height]])
+                .on('zoom', updateChartAfterZoom);
+
+            // This add an invisible rect on top of the chart area. This rect can recover pointer events: necessary to understand when the user zoom
+            svg.append("rect")
+                .attr("width", chartWidth)
+                .attr("height", chartHeight)
+                .style("fill", "none")
+                .style("pointer-events", "all")
+                .attr('transform', 'translate(' + margin.left + ',' + margin.top + ')')
+                .call(zoom);
+        }
+
+        /**
+         * Update chart elements after zoom events
+         * @return {void}
+         * @private
+         */
+        function updateChartAfterZoom() {
+            //update scale
+            const transform = d3Zoom.zoomTransform(this)
+            xScale = transform.rescaleX(xOriginalScale)
+            yScale = transform.rescaleY(yOriginalScale);
+            //update axes
+            svg.select('.x-axis-group .axis.x')
+                .call(d3Axis.axisBottom(xScale))
+            svg.select('.y-axis-group .axis.y')
+                .call(d3Axis.axisLeft(yScale))
+            // update circle position
+            svg.select('.chart-group')
+                .selectAll("circle")
+                .attr('cx', d => xScale(d.x))
+                .attr('cy', d => yScale(d.y));
+            // update highlight location
+            highlightCircle
+                .attr('cx', () => xScale(highlightPointData.x))
+                .attr('cy', () => yScale(highlightPointData.y));
         }
 
         /**
@@ -700,15 +752,15 @@ define(function(require) {
          */
         function handleMouseMove(e) {
             const closestPoint = getClosestPoint(e);
-            const pointData = getPointData(closestPoint);
+            highlightPointData = getPointData(closestPoint);
 
             if (hasCrossHairs) {
-                drawDataPointsValueHighlights(pointData);
+                drawDataPointsValueHighlights(highlightPointData);
             }
 
-            highlightDataPoint(pointData);
+            highlightDataPoint(highlightPointData);
 
-            dispatcher.call('customMouseMove', e, pointData, d3Selection.mouse(e), [chartWidth, chartHeight]);
+            dispatcher.call('customMouseMove', e, highlightPointData, d3Selection.mouse(e), [chartWidth, chartHeight]);
         }
 
         /**
